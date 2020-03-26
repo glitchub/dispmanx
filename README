@@ -1,0 +1,11 @@
+Write raw RGB data directly to dispmanx display device.
+
+Intended for Raspberry Pi 3B, to put images on HDMI when a DSI touchscreen is attached.
+
+Bash script illustrates use.
+
+
+gm convert "image.png" -resize "!1920x1080" -depth 8 RGB:-
+
+
+python3 -c 'import pgmagick.*, sys; b=Blob(); i=Image("../pionic/default/colorbars.jpg"); i.resize("!1920x1080"); i.write(b, "RGB", 8); sys.stdout.buffer.write(b.data)' | ./dispmanx

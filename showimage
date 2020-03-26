@@ -1,0 +1,49 @@
+#!/bin/bash -eu
+
+die() { echo $* >&2; exit 1; }
+
+usage() { die "\
+Usage:
+
+    $0 [options] file.img
+
+Show image file on HDMI display until ^C is pressed.  Requires package
+'graphicsmagick' or 'imagemagick' to be installed.
+
+Options are:
+
+    -d N        - use display device N instead of searching for HDMI
+    -t seconds  - exit after specified seconds instead of waiting forever
+
+"; };
+
+display=""
+timeout=""
+
+while getopts ":d:t:" o do case $o in
+    d) display=$OPTARG;;
+    t) timeout="-t $OPTARG";;
+    *) usage;;
+esac; done
+shift $((OPTIND-1))
+
+(($# == 1)) || usage
+
+if type -p gm >/dev/null; then
+    convert = 'gm convert'
+elif type -p convert >/dev/null; then
+    convert = 'convert'
+else
+    die "Requires package 'graphicsmagick' or 'imagemagick' to be installed"
+fi
+
+if ! [[ $display ]]; then
+    display=$(tvservice -l | awk '/HDMI/{print $3; exit}' FS=' |,')
+    [[ $display ]] || die "Cn't find HDMI display"
+fi
+
+resolution = $(tvservice -sv$display | awk '{print $2}' FS=',' | awk '{print $1}')
+[[ $resolution ]] || die "Can't get resolution for display $display"
+
+# convert the image to properly-sized RGB data and pipe to dispmanx
+$convert $1 -resize "!$resolution" -depth 8 "RGB:-" | ./dispmanx -d$display $timeout
