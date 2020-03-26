@@ -61,8 +61,13 @@ int main(int argc, char *argv[])
     void *image = malloc(height * width * 3);
     if (!image) die("Out of memory\n");
 
-    int r = read(0, image, height * width * 3);
-    if (r != height * width * 3) die("Expected %d bytes of RGB data on stdin, but only got %d bytes\n", height*width*3, r);
+    int r = 0;
+    while (r < height*width*3)
+    {
+        int n = read(0, image + r, height*width*3);
+        if (n <= 0) die("Expected %d bytes of RGB data on stdin, but only got %d bytes\n", height*width*3, r);
+        r += n;
+    }
 
     DISPMANX_UPDATE_HANDLE_T update = vc_dispmanx_update_start(0);
     if (!update) die("vc_dispmanx_update_start failed\n");
