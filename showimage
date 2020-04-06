@@ -1,49 +1,57 @@
-#!/bin/bash -eu
+#!/usr/bin/python3
+import os, sys, getopt, subprocess, PIL.Image as Image
 
-die() { echo "$*" >&2; exit 1; }
+here = os.path.dirname(__file__) or '.'
 
-usage() { die "\
+usage="""\
 Usage:
 
-    $0 [options] file.img
+    showimage [options] file.img
 
-Show image file on HDMI display until ^C is pressed.  Requires package
-'graphicsmagick' or 'imagemagick' to be installed.
+Show image file on HDMI display until program exits. Requires PIL.
 
 Options are:
 
     -d N        - use display device N instead of searching for HDMI
     -t seconds  - exit after specified seconds instead of waiting forever
 
-"; };
+"""
 
-display=""
-timeout=""
+display=None
+timeout=0
 
-while getopts ":d:t:" o; do case $o in
-    d) display=$OPTARG;;
-    t) timeout="-t $OPTARG";;
-    *) usage;;
-esac; done
-shift $((OPTIND-1))
+try:
+    opts, args = getopt.getopt(sys.argv[1:],"d:t:")
 
-(($# == 1)) || usage
+    if len(args) != 1: raise Exception("Must specify an image name")
 
-if type -p gm >/dev/null; then
-    convert='gm convert'
-elif type -p convert >/dev/null; then
-    convert='convert'
-else
-    die "Requires package 'graphicsmagick' or 'imagemagick' to be installed"
-fi
+    for opt, arg in opts:
+        if   opt == "-d": display = int(arg)
+        elif opt == "-t": timeout = int(arg)
 
-if ! [[ $display ]]; then
-    display=$(tvservice -l | awk '/HDMI/{print $3; exit}' FS=' |,')
-    [[ $display ]] || die "Can't find HDMI display"
-fi
+except Exception as e:
+    print (str(e),"\n",usage,file = sys.stderr)
+    quit(1)
 
-resolution=$(./dispmanx -r -d$display)
-[[ $resolution ]] || die "Can't get resolution for display $display"
+if display is None:
+    # get list of displays from tvservice
+    p=subprocess.run(["tvservice","-l"], check=True, stdout=subprocess.PIPE)
+    for l in p.stdout.decode("ascii").splitlines():
+        if "HDMI" in l:
+            display=int(l.split()[2][0])
+            break
+    if display is None: raise Exception("Can't find HDMI display")
 
-# convert the image to properly-sized RGB data and pipe to dispmanx
-$convert $1 -resize !$resolution -depth 8 RGB:- | ./dispmanx -d$display $timeout
+# invoke dispmanx to get display resolution
+p=subprocess.run(["./dispmanx","-r","-d%d" % display], check=True, capture_output=True)
+width, _, height = p.stdout.decode("ascii").partition("x")
+
+# convert image to rgb data
+rgb = Image.open(args[0]).convert('RGB').resize((int(width),int(height))).tobytes()
+
+# create the dispmanx command
+dispmanx = [here+"/dispmanx", "-d%d" % display]
+if timeout: dispmanx += ["-t%d" % timeout]
+
+# run until timeout, or forever
+subprocess.run(dispmanx, check=True, input=rgb)
