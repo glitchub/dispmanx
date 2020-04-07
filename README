@@ -8,8 +8,8 @@ Run 'make' to build the binary, then ./dispmanx -h for options.
 
 Examples:
 
-    convert "file.img" -resize "!1920x1080" -depth 8 RGB:- | ./dispmanx
+    gm convert "file.img" -resize "!1920x1080" -depth 8 RGB:- | ./dispmanx
 
     python3 -c 'import pgmagick as gm,sys; b=gm.Blob(); i=gm.Image("file.img"); i.resize("!1920x1080"); i.write(b, "RGB", 8); sys.stdout.buffer.write(b.data)' | ./dispmanx
 
-Also see the showimage script.
+Also see the 'show' utility script.
