@@ -1,0 +1,54 @@
+#!/usr/bin/python3
+import os, sys, getopt, subprocess, PIL.Image as Image
+
+here = os.path.dirname(__file__) or '.'
+
+usage="""\
+Usage:
+
+    show [options] file.img
+
+Show image file on HDMI display until program exits. Requires PIL.
+
+Options are:
+
+    -d N        - use display device N instead of searching for HDMI
+    -t seconds  - exit after specified seconds instead of waiting forever
+
+"""
+
+display = None
+timeout = 0
+
+try:
+    opts, args = getopt.getopt(sys.argv[1:],"d:t:")
+
+    if len(args) != 1: raise Exception("Must specify an image name")
+
+    for opt, arg in opts:
+        if   opt == "-d": display = int(arg)
+        elif opt == "-t": timeout = int(arg)
+
+except Exception as e:
+    print (str(e),"\n",usage,file = sys.stderr)
+    quit(1)
+
+if display is None:
+    # get list of displays from tvservice
+    p=subprocess.run(["tvservice","-l"], check=True, stdout = subprocess.PIPE)
+    for l in p.stdout.decode("ascii").splitlines():
+        if "HDMI" in l:
+            display=int(l.split()[2][0])
+            break
+    if display is None: raise Exception("Can't find HDMI display")
+
+# invoke dispmanx to get display resolution
+p=subprocess.run(["./dispmanx","-r","-d%d" % display], check=True, stdout = subprocess.PIPE)
+resolution = [int(n) for n in p.stdout.decode("ascii").split("x")]
+
+# convert image to rgb data
+rgb = Image.open(args[0]).convert('RGB').resize(resolution).tobytes()
+
+# run until timeout, or forever
+try: subprocess.run([here+"/dispmanx", "-d%d" % display, "-t%d" % timeout], check=True, input=rgb)
+except KeyboardInterrupt: pass
