@@ -6,7 +6,7 @@ here = os.path.dirname(__file__) or '.'
 usage="""\
 Usage:
 
-    showimage [options] file.img
+    show [options] file.img
 
 Show image file on HDMI display until program exits. Requires PIL.
 
@@ -17,8 +17,8 @@ Options are:
 
 """
 
-display=None
-timeout=0
+display = None
+timeout = 0
 
 try:
     opts, args = getopt.getopt(sys.argv[1:],"d:t:")
@@ -35,7 +35,7 @@ except Exception as e:
 
 if display is None:
     # get list of displays from tvservice
-    p=subprocess.run(["tvservice","-l"], check=True, stdout=subprocess.PIPE)
+    p=subprocess.run(["tvservice","-l"], check=True, stdout = subprocess.PIPE)
     for l in p.stdout.decode("ascii").splitlines():
         if "HDMI" in l:
             display=int(l.split()[2][0])
@@ -43,15 +43,12 @@ if display is None:
     if display is None: raise Exception("Can't find HDMI display")
 
 # invoke dispmanx to get display resolution
-p=subprocess.run(["./dispmanx","-r","-d%d" % display], check=True, capture_output=True)
-width, _, height = p.stdout.decode("ascii").partition("x")
+p=subprocess.run(["./dispmanx","-r","-d%d" % display], check=True, stdout = subprocess.PIPE)
+resolution = [int(n) for n in p.stdout.decode("ascii").split("x")]
 
 # convert image to rgb data
-rgb = Image.open(args[0]).convert('RGB').resize((int(width),int(height))).tobytes()
-
-# create the dispmanx command
-dispmanx = [here+"/dispmanx", "-d%d" % display]
-if timeout: dispmanx += ["-t%d" % timeout]
+rgb = Image.open(args[0]).convert('RGB').resize(resolution).tobytes()
 
 # run until timeout, or forever
-subprocess.run(dispmanx, check=True, input=rgb)
+try: subprocess.run([here+"/dispmanx", "-d%d" % display, "-t%d" % timeout], check=True, input=rgb)
+except KeyboardInterrupt: pass
