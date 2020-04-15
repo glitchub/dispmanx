@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-import os, sys, getopt, subprocess, PIL.Image as Image
+import os, sys, getopt, subprocess, signal, PIL.Image as Image
 
 here = os.path.dirname(__file__) or '.'
 
@@ -8,26 +8,30 @@ Usage:
 
     show [options] file.img
 
-Show image file on HDMI display until program exits. Requires PIL.
+Show image file via dispmanx until program exits. 'dispmanx' executable must be
+in the same directory.
 
 Options are:
 
-    -d N        - use display device N instead of searching for HDMI
-    -t seconds  - exit after specified seconds instead of waiting forever
+    -d N        - use dispmanx device N, default is search for first HDMI device
+    -l layer    - use dispmanx layer N, default is to search for topmost layer
+    -t seconds  - exit after specified seconds, default is 0 (wait forever)
 
 """
 
 display = None
+layer = None
 timeout = 0
 
 try:
-    opts, args = getopt.getopt(sys.argv[1:],"d:t:")
+    opts, args = getopt.getopt(sys.argv[1:],"d:t:l:")
 
     if len(args) != 1: raise Exception("Must specify an image name")
 
     for opt, arg in opts:
         if   opt == "-d": display = int(arg)
         elif opt == "-t": timeout = int(arg)
+        elif opt == "-l": layer = int(arg)
 
 except Exception as e:
     print (str(e),"\n",usage,file = sys.stderr)
@@ -42,13 +46,33 @@ if display is None:
             break
     if display is None: raise Exception("Can't find HDMI display")
 
+if layer is None:
+    # get list of dispmanx layers from vcgencmd
+    p=subprocess.run(["vcgencmd","dispmanx_list"], check=True, stdout = subprocess.PIPE)
+    try:
+        # layers are listed in ascending order, find the last
+        top = [l for l in p.stdout.decode("ascii").splitlines() if l.startswith("display:%d " % display)][-1]
+        # use the last layer number + 1, or 0
+        layer = max(0, int(top.partition("layer:")[2].split(" ")[0])+1)
+    except: pass
+    if layer is None: raise Exception("Can't find dispmanx layers for display %d" % display)
+
 # invoke dispmanx to get display resolution
-p=subprocess.run(["./dispmanx","-r","-d%d" % display], check=True, stdout = subprocess.PIPE)
+p=subprocess.run([here+"/dispmanx","-r","-d%d" % display], check=True, stdout = subprocess.PIPE)
 resolution = [int(n) for n in p.stdout.decode("ascii").split("x")]
 
 # convert image to rgb data
 rgb = Image.open(args[0]).convert('RGB').resize(resolution).tobytes()
 
-# run until timeout, or forever
-try: subprocess.run([here+"/dispmanx", "-d%d" % display, "-t%d" % timeout], check=True, input=rgb)
-except KeyboardInterrupt: pass
+# Start dispmanx
+dm = subprocess.Popen([here+"/dispmanx", "-d%d" % display, "-l%d" % layer, "-t%d" % timeout], stdin=subprocess.PIPE)
+# Kill it if we are killed
+def dt(*args): dm.terminate()
+signal.signal(signal.SIGTERM, dt)
+try:
+    # pass rgb data to dispmanx, and wait, possibly forever
+    dm.communicate(rgb)
+    exit(dm.returncode)
+except KeyboardInterrupt:
+    # child is already killed in this case
+    exit(1)

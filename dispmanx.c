@@ -8,6 +8,7 @@
 #include "bcm_host.h"
 
 #define die(...) fprintf(stderr, __VA_ARGS__), exit(1)
+#define assert(q) if (!(q)) die("Failed assert on line %d: %s", __LINE__, #q)
 
 #define usage() die("\
 Usage:\n\
@@ -18,20 +19,43 @@ Write raw RGB data from stdin to Raspberry Pi display via the dispmanx stack.\n\
 The dispmanx layer is removed when the program exits.\n\
 \n\
 Options are:\n\
-    -d display      - dispmanx display number, default is 0 (try 'tvservice -l' for list).\n\
-    -r              - just report display size in format 'WIDTHxHEIGHT' and exit.\n\
-    -t seconds      - enable timeout, default is 0 (never timeout).\n\
+    -d display      - dispmanx display number, default is 0\n\
+    -l layer        - dispmanx layer number, default is 0\n\
+    -r              - just report display size in format 'WIDTHxHEIGHT' and exit\n\
+    -t seconds      - enable timeout, default is 0 (never timeout)\n\
+\n\
+Use 'tvservice -l' to see list of dispmanx displays.\n\
+Use 'vcgencmd dispmanx_list' to see list dispmanx layers.\n\
 ")
+
+DISPMANX_DISPLAY_HANDLE_T display = 0;
+DISPMANX_ELEMENT_HANDLE_T element = 0;
+
+// Invoked by atexit to shut dispmanx down.
+// Because broadcom doesn't know about exit handlers or file handles?
+void cleanup(void)
+{
+    if (element)
+    {
+        DISPMANX_UPDATE_HANDLE_T update;
+        assert(update = vc_dispmanx_update_start(0));
+        assert(!vc_dispmanx_element_remove(update, element));
+        assert(!vc_dispmanx_update_submit_sync(update));
+    }
+    if (display) assert(!vc_dispmanx_display_close(display));
+}
 
 int main(int argc, char *argv[])
 {
     int number = 0;
     int timeout = 0;
     int report = 0;
+    int layer = 0;
 
-    while (1) switch (getopt(argc, argv, ":d:rt:"))
+    while (1) switch (getopt(argc, argv, ":d:l:rt:"))
     {
         case 'd': number = atoi(optarg); break;
+        case 'l': layer = atoi(optarg); break;
         case 'r': report = 1; break;
         case 't': timeout = atoi(optarg); break;
 
@@ -42,10 +66,12 @@ int main(int argc, char *argv[])
 
     bcm_host_init();
 
-    DISPMANX_DISPLAY_HANDLE_T display = vc_dispmanx_display_open(number);
+    atexit(cleanup); // remove element and close display on exit
+
+    display = vc_dispmanx_display_open(number);
 
     DISPMANX_MODEINFO_T info;
-    if (vc_dispmanx_display_get_info(display, &info)) die("vc_dispmanx_display_get_info failed\n");
+    assert(!vc_dispmanx_display_get_info(display, &info));
     int height = info.height, width = info.width;
     if (report)
     {
@@ -57,8 +83,8 @@ int main(int argc, char *argv[])
 
     int size = height * width * 3; // 3 bytes per pixel
 
-    void *image = malloc(size);
-    if (!image) die("Out of memory\n");
+    void *image;
+    assert(image = malloc(size));
 
     // read stdin directly to the image
     int r = 0;
@@ -69,27 +95,30 @@ int main(int argc, char *argv[])
         r += n;
     }
 
-    DISPMANX_UPDATE_HANDLE_T update = vc_dispmanx_update_start(0);
-    if (!update) die("vc_dispmanx_update_start failed\n");
+    // create the target resource aka display surface
+    unsigned int wtf_int; // don't know what this is for
+    DISPMANX_RESOURCE_HANDLE_T resource;
+    assert(resource = vc_dispmanx_resource_create(VC_IMAGE_RGB888, width, height, &wtf_int));
 
-    unsigned int junk; // no idea what this is for
-    DISPMANX_RESOURCE_HANDLE_T resource = vc_dispmanx_resource_create(VC_IMAGE_RGB888, width, height, &junk);
-    if (!resource) die("vc_dispmanx_resource_create failed\n");
-
+    // copy the image to a rectangle
     VC_RECT_T image_rect;
     vc_dispmanx_rect_set( &image_rect, 0, 0, width, height);
-    if (vc_dispmanx_resource_write_data(resource, VC_IMAGE_RGB888, width*3, image, &image_rect )) die("vc_dispmanx_resource_write_data failed\n");
+    assert(!vc_dispmanx_resource_write_data(resource, VC_IMAGE_RGB888, width*3, image, &image_rect));
 
-    // no idea what this is either
-    VC_RECT_T junk_rect;
-    vc_dispmanx_rect_set(&junk_rect, 0, 0, width<<16, height<<16);
+    // don't know what this is for
+    VC_RECT_T wtf_rect;
+    vc_dispmanx_rect_set(&wtf_rect, 0, 0, width<<16, height<<16);
 
-    VC_DISPMANX_ALPHA_T alpha = {DISPMANX_FLAGS_ALPHA_FROM_SOURCE | DISPMANX_FLAGS_ALPHA_FIXED_ALL_PIXELS, 255, 0}; // 255 -> opaque
-    if (!vc_dispmanx_element_add(update, display, 0, &image_rect, resource, &junk_rect, DISPMANX_PROTECTION_NONE, &alpha, NULL, VC_IMAGE_ROT0))
-        die("vc_dispmanx_element_add failed\n");
+    // don't know why this is needed since RGB888 doesn't have alpha
+    VC_DISPMANX_ALPHA_T wtf_alpha = {DISPMANX_FLAGS_ALPHA_FROM_SOURCE | DISPMANX_FLAGS_ALPHA_FIXED_ALL_PIXELS, 255, 0}; // 255 -> opaque
 
-    if (vc_dispmanx_update_submit_sync(update)) die("vc_dispmanx_update_submit_sync failed\n");
+    // update the resource with image_rect and sync it to the display
+    DISPMANX_UPDATE_HANDLE_T update;
+    assert(update = vc_dispmanx_update_start(0));
+    assert(element = vc_dispmanx_element_add(update, display, layer, &image_rect, resource, &wtf_rect, DISPMANX_PROTECTION_NONE, &wtf_alpha, NULL, DISPMANX_NO_ROTATE));
+    assert(!vc_dispmanx_update_submit_sync(update));
 
+    // now wait
     if (timeout) sleep(timeout); else select(0, NULL, NULL, NULL, NULL);
 
     return 0;
